@@ -30,7 +30,7 @@ jobs:
       - name: Prepare Pages artifact
         run: |
           mkdir -p site
-          cp output/worldcup_report.html site/index.html
+          cp worldcup_report.html site/index.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
