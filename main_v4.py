@@ -708,11 +708,13 @@ def simulate_tournament_once(prepared_groups, home_model, away_model, state, kno
             bracket_nodes.append({
                 "round": current_round_name,
                 "match": match_idx,
+                "slot": "left",
                 "team": team_a,
             })
             bracket_nodes.append({
                 "round": current_round_name,
                 "match": match_idx,
+                "slot": "right",
                 "team": team_b,
             })
 
@@ -771,6 +773,7 @@ def simulate_world_cup(fixtures, prediction_cache, home_model, away_model, state
     }
 
     bracket_counts = defaultdict(int)
+    bracket_matchup_counts = defaultdict(int)
     knockout_cache = {}
 
     progress_interval = max(1, sims // 10)
@@ -804,7 +807,22 @@ def simulate_world_cup(fixtures, prediction_cache, home_model, away_model, state
                     knockout_counts[team][stage] += 1
 
         for node in bracket_nodes:
-            bracket_counts[(node["round"], node["match"], node["team"])] += 1
+            bracket_counts[
+                (node["round"], node["match"], node["slot"], node["team"])
+            ] += 1
+
+        for left, right in zip(bracket_nodes[0::2], bracket_nodes[1::2]):
+            if left["round"] != right["round"] or left["match"] != right["match"]:
+                continue
+
+            bracket_matchup_counts[
+                (
+                    left["round"],
+                    left["match"],
+                    left["team"],
+                    right["team"],
+                 )
+            ] += 1
 
     log(f"{sims:,}/{sims:,} komplette Turniere simuliert")
 
@@ -844,11 +862,23 @@ def simulate_world_cup(fixtures, prediction_cache, home_model, away_model, state
 
     bracket_rows = []
 
-    for (round_name, match_idx, team), count in bracket_counts.items():
+    for (round_name, match_idx, slot, team), count in bracket_counts.items():
         bracket_rows.append({
             "round": round_name,
+          "match": match_idx,
+           "slot": slot,
+           "team": team,
+           "probability": count / sims,
+        })
+
+    matchup_rows = []
+
+    for (round_name, match_idx, team_a, team_b), count in bracket_matchup_counts.items():
+        matchup_rows.append({
+            "round": round_name,
             "match": match_idx,
-            "team": team,
+            "team_a": team_a,
+            "team_b": team_b,
             "probability": count / sims,
         })
 
@@ -863,11 +893,16 @@ def simulate_world_cup(fixtures, prediction_cache, home_model, away_model, state
     )
 
     bracket_df = pd.DataFrame(bracket_rows).sort_values(
-        ["round", "match", "probability"],
-        ascending=[True, True, False],
+     ["round", "match", "slot", "probability"],
+     ascending=[True, True, True, False],
     )
 
-    return group_df, knockout_df, bracket_df
+    matchup_df = pd.DataFrame(matchup_rows).sort_values(
+      ["round", "match", "probability"],
+      ascending=[True, True, False],
+    )
+
+    return group_df, knockout_df, bracket_df, matchup_df
 
 
 def save_group_outputs(group_df):
@@ -882,7 +917,7 @@ def save_group_outputs(group_df):
         )
 
 
-def save_snapshot(fixtures, group_df, knockout_df, bracket_df):
+def save_snapshot(fixtures, group_df, knockout_df, bracket_df, matchup_df):
     snapshot_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     snapshot_dir = OUTPUT_DIR / "snapshots" / snapshot_id
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -890,6 +925,7 @@ def save_snapshot(fixtures, group_df, knockout_df, bracket_df):
     fixtures.to_csv(snapshot_dir / "fixtures.csv", index=False)
     knockout_df.to_csv(snapshot_dir / "knockout.csv", index=False)
     bracket_df.to_csv(snapshot_dir / "bracket.csv", index=False)
+    matchup_df.to_csv(snapshot_dir / "bracket_matchups.csv", index=False)
 
     match_predictions = OUTPUT_DIR / "match_predictions.csv"
     if match_predictions.exists():
@@ -961,7 +997,7 @@ def main():
     save_frozen_match_predictions(prediction_cache, fixtures)
     print_match_predictions(prediction_cache)
     
-    group_df, knockout_df, bracket_df = simulate_world_cup(
+    group_df, knockout_df, bracket_df, matchup_df  = simulate_world_cup(
         fixtures,
         prediction_cache,
         home_model,
@@ -974,11 +1010,11 @@ def main():
 
     knockout_df.to_csv(OUTPUT_DIR / "knockout.csv", index=False)
     bracket_df.to_csv(OUTPUT_DIR / "bracket.csv", index=False)
-
+    matchup_df.to_csv(OUTPUT_DIR / "bracket_matchups.csv", index=False)
     print_group_summary(group_df)
     print_knockout_summary(knockout_df)
 
-    save_snapshot(fixtures, group_df, knockout_df, bracket_df)
+    save_snapshot(fixtures, group_df, knockout_df, bracket_df, matchup_df)
 
     log("Fertig")
 

@@ -6,6 +6,13 @@ import pandas as pd
 OUTPUT_DIR = Path("output")
 REPORT_FILE = OUTPUT_DIR / "worldcup_report.html"
 
+def load_bracket_matchups():
+    file = OUTPUT_DIR / "bracket_matchups.csv"
+
+    if not file.exists():
+        return pd.DataFrame()
+
+    return pd.read_csv(file)
 
 def load_match_predictions():
     file = OUTPUT_DIR / "frozen_match_predictions.csv"
@@ -25,12 +32,18 @@ def load_match_predictions():
     return predictions
 
 def render_bracket_tree():
-    file = OUTPUT_DIR / "bracket.csv"
+    bracket_file = OUTPUT_DIR / "bracket.csv"
+    matchup_file = OUTPUT_DIR / "bracket_matchups.csv"
 
-    if not file.exists():
+    if not bracket_file.exists():
         return ""
 
-    df = pd.read_csv(file)
+    bracket_df = pd.read_csv(bracket_file)
+
+    if matchup_file.exists():
+        matchup_df = pd.read_csv(matchup_file)
+    else:
+        matchup_df = pd.DataFrame()
 
     round_order = ["R32", "R16", "QF", "SF", "FINAL"]
     round_titles = {
@@ -44,29 +57,75 @@ def render_bracket_tree():
     columns = []
 
     for round_name in round_order:
-        rdf = df[df["round"] == round_name]
+        rdf = bracket_df[bracket_df["round"] == round_name]
         matches_html = []
 
         for match_idx in sorted(rdf["match"].unique()):
-            mdf = rdf[rdf["match"] == match_idx].sort_values(
-                "probability",
-                ascending=False,
-            ).head(4)
+            left_df = rdf[
+                (rdf["match"] == match_idx) &
+                (rdf["slot"] == "left")
+            ].sort_values("probability", ascending=False).head(4)
 
-            teams_html = []
+            right_df = rdf[
+                (rdf["match"] == match_idx) &
+                (rdf["slot"] == "right")
+            ].sort_values("probability", ascending=False).head(4)
 
-            for _, r in mdf.iterrows():
-                teams_html.append(f"""
-                <div class="bracket-team">
-                    <span>{esc(r["team"])}</span>
-                    <strong>{float(r["probability"]) * 100:.1f}%</strong>
+            def render_slot(title, sdf):
+                teams = []
+
+                for _, r in sdf.iterrows():
+                    teams.append(f"""
+                    <div class="bracket-team">
+                        <span>{esc(r["team"])}</span>
+                        <strong>{float(r["probability"]) * 100:.1f}%</strong>
+                    </div>
+                    """)
+
+                return f"""
+                <div class="bracket-slot">
+                    <div class="bracket-slot-title">{title}</div>
+                    {''.join(teams)}
                 </div>
-                """)
+                """
+
+            matchup_html = ""
+
+            if not matchup_df.empty:
+                mdf = matchup_df[
+                    (matchup_df["round"] == round_name) &
+                    (matchup_df["match"] == match_idx)
+                ].sort_values("probability", ascending=False).head(3)
+
+                if not mdf.empty:
+                    rows = []
+
+                    for _, r in mdf.iterrows():
+                        rows.append(f"""
+                        <div class="bracket-team matchup">
+                            <span>{esc(r["team_a"])} vs {esc(r["team_b"])}</span>
+                            <strong>{float(r["probability"]) * 100:.1f}%</strong>
+                        </div>
+                        """)
+
+                    matchup_html = f"""
+                    <div class="bracket-matchups">
+                        <div class="bracket-slot-title">Most likely matchup</div>
+                        {''.join(rows)}
+                    </div>
+                    """
 
             matches_html.append(f"""
             <div class="bracket-match">
                 <div class="bracket-match-title">Match {int(match_idx)}</div>
-                {''.join(teams_html)}
+
+                {render_slot("Left slot", left_df)}
+
+                <div class="versus">VS</div>
+
+                {render_slot("Right slot", right_df)}
+
+                {matchup_html}
             </div>
             """)
 
@@ -81,7 +140,8 @@ def render_bracket_tree():
     <section class="card wide">
         <h2 data-i18n="bracket">Prognose-Turnierbaum</h2>
         <p class="hint">
-            Der Baum zeigt je K.-o.-Runden-Slot die wahrscheinlichsten Teams auf Basis aller Simulationen.
+            Der Baum zeigt je K.-o.-Runden-Match die wahrscheinlichsten Teams pro Slot
+            sowie die wahrscheinlichsten direkten Paarungen.
         </p>
         <div class="bracket">
             {''.join(columns)}
@@ -92,21 +152,6 @@ def render_bracket_tree():
 def esc(value):
     return html.escape(str(value))
 
-def load_match_predictions():
-    file = OUTPUT_DIR / "match_predictions.csv"
-
-    if not file.exists():
-        return {}
-
-    df = pd.read_csv(file)
-
-    predictions = {}
-
-    for _, r in df.iterrows():
-        key = (r["home_team"], r["away_team"])
-        predictions[key] = r
-
-    return predictions
 
 
 def pct(value, decimals=1):
@@ -838,6 +883,24 @@ tr:hover {
     color: #b91c1c;
 }
 
+.disclaimer {
+    font-size: 14px;
+    line-height: 1.7;
+}
+
+.disclaimer p {
+    margin-bottom: 12px;
+}
+
+.disclaimer a {
+    color: #2563eb;
+    text-decoration: none;
+}
+
+.disclaimer a:hover {
+    text-decoration: underline;
+}
+
 .delta.neutral {
     color: #6b7280;
 }
@@ -850,6 +913,41 @@ footer {
     padding: 24px 48px;
     color: #6b7280;
     font-size: 13px;
+}
+
+.bracket-slot {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 8px;
+    margin-bottom: 8px;
+}
+
+.bracket-slot-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #6b7280;
+    font-weight: 800;
+    margin-bottom: 6px;
+}
+
+.versus {
+    text-align: center;
+    font-size: 11px;
+    font-weight: 900;
+    color: #6b7280;
+    margin: 6px 0;
+}
+
+.bracket-matchups {
+    background: #eef2ff;
+    border-radius: 10px;
+    padding: 8px;
+    margin-top: 10px;
+}
+
+.bracket-team.matchup span {
+    font-weight: 500;
 }
 
 @media (max-width: 1000px) {
@@ -913,9 +1011,73 @@ def build_html():
         {render_knockout_table()}
     </main>
 
-    <footer data-i18n="footer">
-        Generiert aus lokalen Simulationsergebnissen. Datenquelle: https://github.com/martj42/international_results
-    </footer>
+    <section class="card wide disclaimer">
+    <h2>Disclaimer</h2>
+
+    <p>
+        This website is a personal hobby project focused on football analytics,
+        machine learning and statistical modelling.
+    </p>
+
+    <p>
+        All predictions shown on this site are generated automatically using
+        historical football data, Elo ratings, machine learning models,
+        Poisson goal simulations and Monte Carlo tournament simulations.
+    </p>
+
+    <p>
+        The results are intended solely for educational and entertainment
+        purposes and must not be interpreted as betting advice, gambling advice,
+        financial advice or professional sports forecasts.
+    </p>
+    <p>
+    This website does not use cookies, tracking technologies,
+    analytics services, user accounts or advertising networks.
+    No personal data is collected, stored or processed.
+    </p>
+    <p>
+        No guarantee is made regarding the accuracy, completeness or correctness
+        of any prediction.
+    </p>
+</section>
+
+<section class="card wide disclaimer">
+    <h2>Impressum</h2>
+
+    <p>
+        Betreiber dieser Webseite:
+    </p>
+
+    <p>
+        Stefan Loewe<br>
+        Deutschland
+    </p>
+
+    <p>
+        Kontakt:<br>
+        GitHub:
+        <a href="https://github.com/StrikeZW/worldcup-2026-predictor"
+           target="_blank">
+           worldcup-2026-predictor
+        </a>
+    </p>
+
+    <p>
+        Dies ist ein nicht-kommerzielles Hobbyprojekt.
+    </p>
+</section>
+
+<footer data-i18n="footer">
+    Generated from local simulation results.<br>
+    Data sources:
+    <a href="https://github.com/martj42/international_results">
+        international_results
+    </a>
+    &
+    <a href="https://github.com/openfootball/worldcup.json">
+        worldcup.json
+    </a>
+</footer>
 
     {LANG_SCRIPT}
 </body>
